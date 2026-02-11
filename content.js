@@ -78,59 +78,65 @@ async function concatAudioFromPage() {
     offset += buf.length;
   });
 
-  // 🔹 Convert to WAV
-  const wavBlob = bufferToWav(output);
+  // 🔹 Convert to MP3
+  const mp3Blob = bufferToMp3(output);
 
-  // 🔹 Download file
-  const url = URL.createObjectURL(wavBlob);
+  // 🔹 Generate filename from main audio src
+  const rawSrc = mainAudioEl.getAttribute("src");
+
+  // Get file name from path
+  const fileNameWithExt = rawSrc.split("/").pop(); 
+  // Decode URL encoding
+  const decodedName = decodeURIComponent(fileNameWithExt);
+  // Remove .mp3 extension
+  const baseName = decodedName.replace(/\.mp3$/i, "");
+
+  // Final filename
+  const finalFileName = baseName + ".mp3";
+
+  // 🔹 Download
+  const url = URL.createObjectURL(mp3Blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "sentence.wav";
+  a.download = finalFileName;
   a.click();
 
   URL.revokeObjectURL(url);
 }
 
 // 🔊 Convert AudioBuffer → WAV
-function bufferToWav(buffer) {
-  const numChannels = buffer.numberOfChannels;
+function bufferToMp3(buffer) {
   const sampleRate = buffer.sampleRate;
-  const length = buffer.length * numChannels * 2 + 44;
-  const view = new DataView(new ArrayBuffer(length));
+  const samples = buffer.getChannelData(0);
 
-  function writeString(offset, str) {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
+  const mp3encoder = new lamejs.Mp3Encoder(1, sampleRate, 128);
+  const blockSize = 1152;
+  const mp3Data = [];
+
+  let i = 0;
+  while (i < samples.length) {
+    const slice = samples.subarray(i, i + blockSize);
+
+    // Convert Float32 → Int16
+    const int16 = new Int16Array(slice.length);
+    for (let j = 0; j < slice.length; j++) {
+      int16[j] = Math.max(-1, Math.min(1, slice[j])) * 32767;
     }
+
+    const mp3buf = mp3encoder.encodeBuffer(int16);
+    if (mp3buf.length > 0) {
+      mp3Data.push(new Uint8Array(mp3buf));
+    }
+
+    i += blockSize;
   }
 
-  let offset = 0;
-
-  writeString(offset, "RIFF"); offset += 4;
-  view.setUint32(offset, length - 8, true); offset += 4;
-  writeString(offset, "WAVE"); offset += 4;
-  writeString(offset, "fmt "); offset += 4;
-  view.setUint32(offset, 16, true); offset += 4;
-  view.setUint16(offset, 1, true); offset += 2;
-  view.setUint16(offset, numChannels, true); offset += 2;
-  view.setUint32(offset, sampleRate, true); offset += 4;
-  view.setUint32(offset, sampleRate * numChannels * 2, true); offset += 4;
-  view.setUint16(offset, numChannels * 2, true); offset += 2;
-  view.setUint16(offset, 16, true); offset += 2;
-  writeString(offset, "data"); offset += 4;
-  view.setUint32(offset, length - offset - 4, true); offset += 4;
-
-  // Interleave audio
-  const channelData = buffer.getChannelData(0);
-  let index = offset;
-
-  for (let i = 0; i < channelData.length; i++) {
-    let sample = Math.max(-1, Math.min(1, channelData[i]));
-    view.setInt16(index, sample * 0x7fff, true);
-    index += 2;
+  const endBuf = mp3encoder.flush();
+  if (endBuf.length > 0) {
+    mp3Data.push(new Uint8Array(endBuf));
   }
 
-  return new Blob([view], { type: "audio/wav" });
+  return new Blob(mp3Data, { type: "audio/mp3" });
 }
 
 
